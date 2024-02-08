@@ -1,12 +1,17 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 )
 
 func main() {
+	phpPathFlag := flag.String("php-path", "", "путь к исполняемому файлу PHP, если также нужно проверить таймзоны в PHP")
+	flag.Parse()
+
 	isOk := true
 	now := time.Now()
 	fmt.Printf("Текущее время в дефолтной таймзоне: %s\n", now.Format(time.RFC3339))
@@ -48,7 +53,44 @@ func main() {
 		}
 	}
 
+	if *phpPathFlag != "" {
+		phpInfo, phpErr := checkPhpTimezone(*phpPathFlag)
+		if phpErr != nil {
+			isOk = false
+			fmt.Printf(phpErr.Error() + "\n")
+		}
+
+		fmt.Println(phpInfo)
+	}
+
 	if !isOk {
 		os.Exit(-1)
+	}
+}
+
+// Проверяет, что для дат после марта 2024 в Asia/Almaty PHP вернёт оффсет, равный 5 часам
+func checkPhpTimezone(phpPath string) (string, error) {
+	cmd := exec.Command(
+		phpPath,
+		"-r",
+		`echo (new \DateTime('2024-03-02T00:00:00', new \DateTimeZone('Asia/Almaty')))->getOffset();`,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("👎 Не удалось получить информацию о таймзоне PHP %s: %w", phpPath, err)
+	}
+
+	expected := "18000"
+
+	if string(out) != expected {
+		return "", fmt.Errorf(
+			`👎 Сдвиг в марте на PHP %s не равен ожидаемому: получили %s, ожидалось %s секунд. `+
+				`Нужно обновить расширение timezonedb: https://serverpilot.io/docs/how-to-update-the-php-timezonedb-version/`,
+			phpPath,
+			expected,
+			string(out),
+		)
+	} else {
+		return fmt.Sprintf("👍 Сдвиг в марте на PHP %s равен ожидаемому: %s", phpPath, string(out)), nil
 	}
 }
